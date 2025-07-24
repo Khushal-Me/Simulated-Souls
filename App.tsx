@@ -12,6 +12,7 @@ const App: React.FC = () => {
   const [playerAction, setPlayerAction] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [loadingMessage, setLoadingMessage] = useState<string>('');
 
   const chatRef = useRef<Chat | null>(null);
   const sceneDescriptionRef = useRef<HTMLDivElement>(null); // For scrolling
@@ -31,11 +32,14 @@ const App: React.FC = () => {
 
   const handleGenericError = (err: unknown, context: string) => {
     console.error(`Error ${context}:`, err);
+    setLoadingMessage(''); // Clear loading message on error
     if (err instanceof Error) {
       if (err.message.startsWith("RateLimitError:")) {
         setError(`You've exceeded your current API usage quota. Please check your plan and billing details, or try again later. For more information, visit https://ai.google.dev/gemini-api/docs/rate-limits.`);
       } else if (err.message.includes("Invalid API Key")) {
         setError("Invalid API Key. Please ensure your API_KEY is correctly configured in the environment variables and that the key is valid.");
+      } else if (err.message.includes("overloaded") || err.message.includes("UNAVAILABLE")) {
+        setError("The AI service is currently experiencing high traffic. We automatically retry failed requests, but if this persists, please try again in a few minutes.");
       } else {
         setError(`An error occurred: ${err.message}`);
       }
@@ -49,15 +53,19 @@ const App: React.FC = () => {
     setError(null);
     setCurrentImageUrl(null); 
     setCurrentSceneDescription('');
+    setLoadingMessage('Starting your adventure...');
     try {
       chatRef.current = createChatSession();
       const initialResponse = await sendMessageToGemini(chatRef.current, "Start the adventure.");
       if (initialResponse) {
         setCurrentSceneDescription(initialResponse.sceneDescription);
+        setLoadingMessage('Generating scene artwork...');
         const imageUrl = await generateImageWithCloudflare(initialResponse.imagePrompt);
         setCurrentImageUrl(imageUrl);
         setGameStarted(true);
+        setLoadingMessage('');
       } else {
+        setLoadingMessage('');
         setError("Failed to initialize the game. The AI storyteller might be busy or returned an unexpected response.");
       }
     } catch (err) {
@@ -75,6 +83,7 @@ const App: React.FC = () => {
     setError(null);
     const actionToSubmit = playerAction;
     setPlayerAction(''); // Clear input field immediately
+    setLoadingMessage('Processing your action...');
 
     try {
       // Append player action to scene description for context
@@ -83,9 +92,12 @@ const App: React.FC = () => {
       const gameResponse = await sendMessageToGemini(chatRef.current, actionToSubmit);
       if (gameResponse) {
         setCurrentSceneDescription(prev => `${prev}\n${gameResponse.sceneDescription}`);
+        setLoadingMessage('Creating scene artwork...');
         const imageUrl = await generateImageWithCloudflare(gameResponse.imagePrompt);
         setCurrentImageUrl(imageUrl);
+        setLoadingMessage('');
       } else {
+        setLoadingMessage('');
         setError("The story took an unexpected turn, or the AI is pondering. Try a different action or check if the AI returned an empty response.");
          setCurrentSceneDescription(prev => `${prev}\n\n[The narrator seems to have lost their train of thought...]`);
       }
@@ -104,6 +116,7 @@ const App: React.FC = () => {
     setPlayerAction('');
     setError(null);
     setIsLoading(false);
+    setLoadingMessage('');
     chatRef.current = null; // Reset chat session
   };
 
@@ -123,7 +136,12 @@ const App: React.FC = () => {
         {!gameStarted ? (
           <div className="text-center">
             {isLoading ? (
-              <LoadingSpinner size="w-16 h-16" />
+              <div className="flex flex-col items-center space-y-4">
+                <LoadingSpinner size="w-16 h-16" />
+                {loadingMessage && (
+                  <p className="text-purple-300 text-lg animate-pulse">{loadingMessage}</p>
+                )}
+              </div>
             ) : (
               <button
                 onClick={handleStartGame}
@@ -137,7 +155,12 @@ const App: React.FC = () => {
           <>
             <div className="mb-6 h-72 md:h-96 w-full bg-gray-700 rounded-lg shadow-inner overflow-hidden flex items-center justify-center border-2 border-purple-500 border-opacity-30">
               {isLoading && !currentImageUrl ? (
-                 <LoadingSpinner size="w-16 h-16" />
+                <div className="flex flex-col items-center space-y-4">
+                  <LoadingSpinner size="w-16 h-16" />
+                  {loadingMessage && (
+                    <p className="text-purple-300 text-lg animate-pulse">{loadingMessage}</p>
+                  )}
+                </div>
               ) : currentImageUrl ? (
                 <img src={currentImageUrl} alt="Current game scene" className="w-full h-full object-cover" />
               ) : (
@@ -168,12 +191,29 @@ const App: React.FC = () => {
               />
               <button
                 type="submit"
-                className="px-6 py-3 bg-purple-600 hover:bg-purple-700 text-white font-semibold rounded-lg shadow-md transition-all duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-purple-400 focus:ring-opacity-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-6 py-3 bg-purple-600 hover:bg-purple-700 text-white font-semibold rounded-lg shadow-md transition-all duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-purple-400 focus:ring-opacity-50 disabled:opacity-50 disabled:cursor-not-allowed min-w-[120px]"
                 disabled={isLoading || !playerAction.trim()}
               >
-                {isLoading ? <LoadingSpinner size="w-5 h-5 inline-block" /> : 'Send Action'}
+                {isLoading ? (
+                  <div className="flex items-center justify-center space-x-2">
+                    <LoadingSpinner size="w-5 h-5" />
+                    <span className="text-sm">Sending...</span>
+                  </div>
+                ) : (
+                  'Send Action'
+                )}
               </button>
             </form>
+            
+            {isLoading && loadingMessage && (
+              <div className="mt-3 text-center">
+                <p className="text-purple-300 text-sm animate-pulse flex items-center justify-center space-x-2">
+                  <span>🔮</span>
+                  <span>{loadingMessage}</span>
+                </p>
+              </div>
+            )}
+            
             <div className="mt-6 text-center">
               <button
                 onClick={handleRestartGame}
